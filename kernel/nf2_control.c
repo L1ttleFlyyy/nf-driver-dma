@@ -349,9 +349,10 @@ static int nf2c_send(struct net_device *dev)
 	skb = card->txbuff[card->rd_txbuff].skb;
 
 	/* Map the buffer into DMA space */
-	card->dma_tx_addr = pci_map_single(card->pdev,
-			skb->data, skb->len, PCI_DMA_TODEVICE);
-
+	// card->dma_tx_addr = pci_map_single(card->pdev,
+	// 		skb->data, skb->len, PCI_DMA_TODEVICE);
+	/*-----------------------------------tx_addr redirection-----------------------------------------*/
+	card->dma_tx_addr = 0x2000;
 	/* Start the transfer */
 	iowrite32(card->dma_tx_addr,
 			card->ioaddr + CPCI_REG_DMA_E_ADDR);
@@ -891,10 +892,12 @@ static irqreturn_t nf2c_intr(int irq, void *dev_id
 				PDEBUG(KERN_DFLT_DEBUG "nf2: dma_rx_in_progress"
 					" is %d\n",
 					atomic_read(&card->dma_rx_in_progress));
-				card->dma_rx_addr = pci_map_single(card->pdev,
-						card->wr_pool->data,
-						MAX_DMA_LEN,
-						PCI_DMA_FROMDEVICE);
+				// card->dma_rx_addr = pci_map_single(card->pdev,
+				// 		card->wr_pool->data,
+				// 		MAX_DMA_LEN,
+				// 		PCI_DMA_FROMDEVICE);
+				/*-----------------------------------rx_addr redirection-----------------------------------------*/
+				card->dma_rx_addr = 0x2000;
 				/* Start the transfer */
 				iowrite32(card->dma_rx_addr,
 						card->ioaddr +
