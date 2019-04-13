@@ -74,6 +74,9 @@ static void nf2c_clear_dma_flags(struct nf2_card_priv *card);
 static void nf2c_check_link_status(struct nf2_card_priv *card,
 		struct net_device *dev, unsigned int ifnum);
 
+
+int rdma_rflag;
+int rdma_r_in_process = 0;
 /**
  * nf2c_open - open method called when the interface is brought up
  * @dev:	Net device
@@ -328,52 +331,74 @@ static int nf2c_send(struct net_device *dev)
 		goto err_unlock;
 	}
 
-	/* Check if there's something to send */
-	if (card->free_txbuffs == tx_pool_size) {
-		atomic_dec(&card->dma_tx_in_progress);
-		err = 1;
-		goto err_unlock;
-	}
 
-	/* Get the interface number of the skb we are sending. */
-	rd_iface = card->txbuff[card->rd_txbuff].iface;
+	if (!rdma_rflag) {
 
-	/* Verify that the TX queue can accept a packet */
-	if ((card->dma_can_wr_pkt & (1 << rd_iface)) == 0) {
-		atomic_dec(&card->dma_tx_in_progress);
-		err = 1;
-		goto err_unlock;
-	}
+		/* Check if there's something to send */
+		if (card->free_txbuffs == tx_pool_size) {
+			atomic_dec(&card->dma_tx_in_progress);
+			err = 1;
+			goto err_unlock;
+		}
 
-	/* Grab the skb */
-	skb = card->txbuff[card->rd_txbuff].skb;
+		/* Get the interface number of the skb we are sending. */
+		rd_iface = card->txbuff[card->rd_txbuff].iface;
+		// printk("---read iface---: %d\n", rd_iface);
+		//warp		
+		/* Verify that the TX queue can accept a packet */
+		if ((card->dma_can_wr_pkt & (1 << rd_iface)) == 0) {
+			atomic_dec(&card->dma_tx_in_progress);
+			err = 1;
+			goto err_unlock;
+		}
 
-	/* Map the buffer into DMA space */
-	// card->dma_tx_addr = pci_map_single(card->pdev,
-	// 		skb->data, skb->len, PCI_DMA_TODEVICE);
-	/*-----------------------------------tx_addr redirection-----------------------------------------*/
-	card->dma_tx_addr = 0x2000;
-	/* Start the transfer */
-	iowrite32(card->dma_tx_addr,
-			card->ioaddr + CPCI_REG_DMA_E_ADDR);
+		/* Grab the skb */
+		skb = card->txbuff[card->rd_txbuff].skb;
 
-	/* Pad the skb to be at least 60 bytes. Call the padding function
-	 * to ensure that there is no information leakage */
-	if (skb->len < 60) {
-		skb_pad(skb, 60 - skb->len);
-		dma_len = 60;
+		/* Map the buffer into DMA space */
+		card->dma_tx_addr = pci_map_single(card->pdev,
+				skb->data, skb->len, PCI_DMA_TODEVICE);
+
+		/* Start the transfer */
+		iowrite32(card->dma_tx_addr,
+				card->ioaddr + CPCI_REG_DMA_E_ADDR);
+
+		/* Pad the skb to be at least 60 bytes. Call the padding function
+		 * to ensure that there is no information leakage */
+		if (skb->len < 60) {
+			skb_pad(skb, 60 - skb->len);
+			dma_len = 60;
+		} else {
+			dma_len = skb->len;
+		}
+		iowrite32(dma_len,
+				card->ioaddr + CPCI_REG_DMA_E_SIZE);
+
+		iowrite32(NF2_SET_DMA_CTRL_MAC(rd_iface) | DMA_CTRL_OWNER,
+				card->ioaddr + CPCI_REG_DMA_E_CTRL);
+
+		PDEBUG(KERN_DFLT_DEBUG "nf2: sending DMA pkt to iface: %d\n",
+				rd_iface);
 	} else {
-		dma_len = skb->len;
+
+		rd_iface = 3;
+		if ((card->dma_can_wr_pkt & (1 << rd_iface)) == 0) {
+			atomic_dec(&card->dma_tx_in_progress);
+			err = 1;
+			goto err_unlock;
+		}
+
+		iowrite32(0x2000,
+				card->ioaddr + CPCI_REG_DMA_E_ADDR);
+		iowrite32(64,
+				card->ioaddr + CPCI_REG_DMA_E_SIZE);
+		iowrite32(NF2_SET_DMA_CTRL_MAC(rd_iface) | DMA_CTRL_OWNER,
+				card->ioaddr + CPCI_REG_DMA_E_CTRL);
+
+		rdma_rflag = 0;
+		rdma_r_in_process = 1;
+
 	}
-	iowrite32(dma_len,
-			card->ioaddr + CPCI_REG_DMA_E_SIZE);
-
-	iowrite32(NF2_SET_DMA_CTRL_MAC(rd_iface) | DMA_CTRL_OWNER,
-			card->ioaddr + CPCI_REG_DMA_E_CTRL);
-
-	PDEBUG(KERN_DFLT_DEBUG "nf2: sending DMA pkt to iface: %d\n",
-			rd_iface);
-
 err_unlock:
 	/*spin_unlock_irqrestore(&priv->card->dma_tx_lock, flags);*/
 
@@ -691,7 +716,7 @@ static void nf2c_tx_timeout(struct net_device *dev)
 	nf2c_clear_dma_flags(card);
 
 	/* Call the send function if there's packets to send */
-	if (card->free_txbuffs != tx_pool_size)
+	// if (card->free_txbuffs != tx_pool_size)
 		nf2c_send(dev);
 
 	/* Wake the stalled queue */
@@ -730,6 +755,7 @@ static irqreturn_t nf2c_intr(int irq, void *dev_id
 
 	unsigned int phy_intr_status;
 	int i;
+	int rdma_wflag = 0;
 
 	/* get the interrupt mask */
 	int_mask = ioread32(card->ioaddr + CPCI_REG_INTERRUPT_MASK);
@@ -768,7 +794,7 @@ static irqreturn_t nf2c_intr(int irq, void *dev_id
 			/* Call the send function if there are other
 			 * packets to send */
 			if (atomic_add_return(1, &card->dma_rx_in_progress) == 1) {
-				if (card->free_txbuffs != tx_pool_size)
+				// if (card->free_txbuffs != tx_pool_size)
 					nf2c_send(netdev);
 			}
 			atomic_dec(&card->dma_rx_in_progress);
@@ -782,20 +808,27 @@ static irqreturn_t nf2c_intr(int irq, void *dev_id
 		if (status & INT_DMA_RX_COMPLETE) {
 			PDEBUG(KERN_DFLT_DEBUG "nf2: intr: "
 					"INT_DMA_RX_COMPLETE\n");
+			if (!rdma_wflag) {
+				pci_unmap_single(card->pdev, card->dma_rx_addr,
+						MAX_DMA_LEN,
+						PCI_DMA_FROMDEVICE);
 
-			pci_unmap_single(card->pdev, card->dma_rx_addr,
-					MAX_DMA_LEN,
-					PCI_DMA_FROMDEVICE);
+				card->wr_pool->len = ioread32(card->ioaddr +
+						CPCI_REG_DMA_I_SIZE);
 
-			card->wr_pool->len = ioread32(card->ioaddr +
-					CPCI_REG_DMA_I_SIZE);
+				ctrl = ioread32(card->ioaddr + CPCI_REG_DMA_I_CTRL);
+				card->wr_pool->dev = card->ndev[(ctrl & 0x300) >> 8];
 
-			ctrl = ioread32(card->ioaddr + CPCI_REG_DMA_I_CTRL);
-			card->wr_pool->dev = card->ndev[(ctrl & 0x300) >> 8];
+				atomic_dec(&card->dma_rx_in_progress);
 
-			atomic_dec(&card->dma_rx_in_progress);
-
-			nf2c_rx(card->wr_pool->dev, card->wr_pool);
+				nf2c_rx(card->wr_pool->dev, card->wr_pool);
+			}
+			else {
+				ctrl = ioread32(card->ioaddr + CPCI_REG_DMA_I_CTRL);
+				card->wr_pool->dev = card->ndev[(ctrl & 0x300) >> 8];
+				printk("device name: %s\n", card->wr_pool->dev->name);
+				atomic_dec(&card->dma_rx_in_progress);
+			}
 
 			/* reenable PKT_AVAIL interrupts */
 			int_mask &= ~INT_PKT_AVAIL;
@@ -806,51 +839,58 @@ static irqreturn_t nf2c_intr(int irq, void *dev_id
 			PDEBUG(KERN_DFLT_DEBUG "nf2: intr: "
 					"INT_DMA_TX_COMPLETE\n");
 
-			/* make sure there is a tx dma in progress */
-			if (atomic_read(&card->dma_tx_in_progress)) {
-				pci_unmap_single(card->pdev, card->dma_tx_addr,
-					card->txbuff[card->rd_txbuff].skb->len,
-					PCI_DMA_TODEVICE);
+			if (!rdma_r_in_process) {			
+				/* make sure there is a tx dma in progress */
+				if (atomic_read(&card->dma_tx_in_progress)) {
+					pci_unmap_single(card->pdev, card->dma_tx_addr,
+						card->txbuff[card->rd_txbuff].skb->len,
+						PCI_DMA_TODEVICE);
 
-				/* Establish which iface we were sending the
-				 * packet on */
-				ifnum = card->txbuff[card->rd_txbuff].iface;
-				tx_iface = netdev_priv(card->ndev[ifnum]);
+					/* Establish which iface we were sending the
+					 * packet on */
+					ifnum = card->txbuff[card->rd_txbuff].iface;
+					tx_iface = netdev_priv(card->ndev[ifnum]);
 
-				/* Update the statistics */
-				tx_iface->stats.tx_packets++;
-				tx_iface->stats.tx_bytes +=
-					card->txbuff[card->rd_txbuff].skb->len;
+					/* Update the statistics */
+					tx_iface->stats.tx_packets++;
+					tx_iface->stats.tx_bytes +=
+						card->txbuff[card->rd_txbuff].skb->len;
 
-				/* Free the skb */
-				dev_kfree_skb_irq(
-					card->txbuff[card->rd_txbuff].skb);
+					/* Free the skb */
+					dev_kfree_skb_irq(
+						card->txbuff[card->rd_txbuff].skb);
 
-				/* Aquire a spinlock for the buffs vbles */
-				spin_lock_irqsave(&card->txbuff_lock, flags);
+					/* Aquire a spinlock for the buffs vbles */
+					spin_lock_irqsave(&card->txbuff_lock, flags);
 
-				/* Note: make sure that txbuffs is incremented
-				 * before dma_tx_in_progress is decremented due
-				 * to the lack of locking in nf2c_send()
-				 */
-				card->rd_txbuff = (card->rd_txbuff + 1) %
-						  tx_pool_size;
-				card->free_txbuffs++;
-				card->free_txbuffs_port[ifnum]++;
-				atomic_dec(&card->dma_tx_in_progress);
+					/* Note: make sure that txbuffs is incremented
+					 * before dma_tx_in_progress is decremented due
+					 * to the lack of locking in nf2c_send()
+					 */
+					card->rd_txbuff = (card->rd_txbuff + 1) %
+							  tx_pool_size;
+					card->free_txbuffs++;
+					card->free_txbuffs_port[ifnum]++;
+					atomic_dec(&card->dma_tx_in_progress);
 
-				/* Re-enable the queues if necessary */
-				if (card->free_txbuffs_port[ifnum] == 1)
-					netif_wake_queue(card->ndev[ifnum]);
+					/* Re-enable the queues if necessary */
+					if (card->free_txbuffs_port[ifnum] == 1)
+						netif_wake_queue(card->ndev[ifnum]);
 
-				spin_unlock_irqrestore(&card->txbuff_lock,
-						flags);
+					spin_unlock_irqrestore(&card->txbuff_lock,
+							flags);
+				}
+			} else {
+				if (atomic_read(&card->dma_tx_in_progress)) {
+					rdma_r_in_process = 0;
+					atomic_dec(&card->dma_tx_in_progress);
+				}
+			}
 
 				/* Call the send function if there are other
 				 * packets to send */
-				if (card->free_txbuffs != tx_pool_size)
+				// if (card->free_txbuffs != tx_pool_size)
 					nf2c_send(netdev);
-			}
 		}
 
 		/* Handle PHY interrupts */
@@ -884,6 +924,7 @@ static irqreturn_t nf2c_intr(int irq, void *dev_id
 		 *
 		 * ie. no need to do: !card->dma_rx_in_progress
 		 */
+
 		if (status & INT_PKT_AVAIL) {
 			PDEBUG(KERN_DFLT_DEBUG "nf2: intr: INT_PKT_AVAIL\n");
 
@@ -892,19 +933,35 @@ static irqreturn_t nf2c_intr(int irq, void *dev_id
 				PDEBUG(KERN_DFLT_DEBUG "nf2: dma_rx_in_progress"
 					" is %d\n",
 					atomic_read(&card->dma_rx_in_progress));
-				// card->dma_rx_addr = pci_map_single(card->pdev,
-				// 		card->wr_pool->data,
-				// 		MAX_DMA_LEN,
-				// 		PCI_DMA_FROMDEVICE);
-				/*-----------------------------------rx_addr redirection-----------------------------------------*/
-				card->dma_rx_addr = 0x2000;
-				/* Start the transfer */
-				iowrite32(card->dma_rx_addr,
-						card->ioaddr +
-						CPCI_REG_DMA_I_ADDR);
-				iowrite32(DMA_CTRL_OWNER,
-						card->ioaddr +
-						CPCI_REG_DMA_I_CTRL);
+
+                unsigned int lo, hi;
+                lo = ioread32(card->ioaddr + 0x200031c);
+                hi = ioread32(card->ioaddr + 0x2000320);
+
+				// rdma_wflag = (lo == 0x38392020) && (hi == 0x34353637);
+				rdma_rflag =  (hi == 0x34353637) && (lo == 0x38392020);
+
+				if (rdma_rflag) {
+
+					nf2c_send(netdev);
+				}
+
+				else if (rdma_wflag) {
+					card->dma_rx_addr = 0x2000;
+				}
+				else {
+					card->dma_rx_addr = pci_map_single(card->pdev,
+										card->wr_pool->data,
+										MAX_DMA_LEN,
+										PCI_DMA_FROMDEVICE);
+				}
+								/* Start the transfer */
+					iowrite32(card->dma_rx_addr,
+							card->ioaddr +
+							CPCI_REG_DMA_I_ADDR);
+					iowrite32(DMA_CTRL_OWNER,
+							card->ioaddr +
+							CPCI_REG_DMA_I_CTRL);
 
 			} else {
 				PDEBUG(KERN_DFLT_DEBUG "nf2: received "

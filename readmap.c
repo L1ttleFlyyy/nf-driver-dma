@@ -29,13 +29,14 @@ int main(){
     }
     /* use 'map' pointer to access the mapped area! */
     int i;
-    for (i=0;i<10;i++){
-        printf("0x%08x: 0x%08x\n",(unsigned int)(map+i),*(map+i));
+	int len = 20;
+    for (i=0;i<len;i++){
+        printf("0x%08x: 0x%08x\n",(unsigned int)(map+i),htonl(*(map+i)));
     }
     printf("press enter to continue...\n");
     scanf("-");
-    for (i=0;i<10;i++){
-        printf("0x%08x: 0x%08x\n",(unsigned int)(map+i),*(map+i));
+    for (i=0;i<len;i++){
+        printf("0x%08x: 0x%08x\n",(unsigned int)(map+i),htonl(*(map+i)));
     }
     /* unmap the area & error checking */
     if (munmap(map,MAPPED_SIZE)==-1){
@@ -46,3 +47,4 @@ int main(){
     close(_fdmem);
     return 0;
 }
+
