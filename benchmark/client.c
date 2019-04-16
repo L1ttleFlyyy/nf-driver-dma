@@ -2,7 +2,7 @@
 
 /*
  * gcc -o client UDPClient.c
- * ./client 
+ * ./client
  */
 
 #include <arpa/inet.h>
@@ -13,11 +13,11 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include <sys/time.h>
 #define BUFLEN 1024
 #define SERVER_PORT 20480
-#define SERVER_ADDR "127.0.0.1"
-#define CLIENT_PORT 40960
+#define SERVER_ADDR "10.1.0.2"
+#define CLIENT_PORT 20480
 #define CLIENT_ADDR "0.0.0.0"
 
 void err(char *s)
@@ -30,10 +30,21 @@ int main(int argc, char **argv)
 {
     struct sockaddr_in server_addr, client_addr;
     int sockfd, i, slen = sizeof(server_addr);
-    char buf[BUFLEN];
-    char RDMA_Request[] = "Hello     0123456789  ";
-    clock_t t;
-
+    unsigned char buf[BUFLEN];
+    unsigned char RDMA_Request[] = "Hello 456789  ";
+    struct timeval start, end, diff;
+    int data_len = 0;
+    if(argc != 2){
+	printf("Usage: client_UDP <data length>\n");
+	exit(1);
+    }
+    data_len = atoi(argv[1]);
+    if(data_len != 64 && data_len != 512 && data_len != 1024){
+	data_len = 64;
+    }
+    RDMA_Request[10] = (unsigned char) (data_len/256);
+    RDMA_Request[11] = (unsigned char) (data_len%256);
+//    printf("%d, %d \n", RDMA_Request[10], RDMA_Request[11]);
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
         err("socket");
 
@@ -50,15 +61,16 @@ int main(int argc, char **argv)
     {
         err("port binding failed");
     }
-    strcpy(buf, RDMA_Request);
-    t = clock();
+    memcpy(buf, RDMA_Request, sizeof(RDMA_Request));
+    gettimeofday(&start, NULL);
     if (sendto(sockfd, buf, BUFLEN, 0, (struct sockaddr *)&server_addr, slen) == -1)
         err("sendto()");
     if (recvfrom(sockfd, buf, BUFLEN, 0, (struct sockaddr *)&server_addr, &slen) == -1)
         err("recvfrom()");
-    t = clock() - t;
+    gettimeofday(&end, NULL);
+    timersub(&end, &start, &diff);
     printf("Received packet from %s:%d\nData: %s\n", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port), buf);
-    printf("%f seconds elapsed\n", ((double)t)/CLOCKS_PER_SEC);
+    printf("%ld.%03ld%03ld seconds elapsed\n", diff.tv_sec, diff.tv_usec/1000, diff.tv_usec%1000);
     close(sockfd);
     return 0;
 }

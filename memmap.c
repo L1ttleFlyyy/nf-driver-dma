@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -29,12 +30,13 @@ int main(){
     }
     /* use 'map' pointer to access the mapped area! */
     int i;
-	int len = 20;
+    int len = 20;
+    memset(map, 0, len * 4);
     for (i=0;i<len;i++){
         printf("0x%08x: 0x%08x\n",(unsigned int)(map+i),htonl(*(map+i)));
     }
     printf("press enter to continue...\n");
-    scanf("-");
+    getchar();
     for (i=0;i<len;i++){
         printf("0x%08x: 0x%08x\n",(unsigned int)(map+i),htonl(*(map+i)));
     }
