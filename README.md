@@ -8,11 +8,9 @@ DMA driver and user api for NetFPGA
 [How to access physical addresses from user space in Linux?](https://stackoverflow.com/questions/12040303/how-to-access-physical-addresses-from-user-space-in-linux)
 
 ## Usage
-`gcc -o readmap readmap.c`
+`make`
 
-`gcc -o writemap writemap.c`
-
-readmap will read physical address 0x2000
+memmap will read physical address 0x2000
 
 writemap will write (0,1,2...9)/(a ,9 ,8->1) to physical address 0x2000
 
