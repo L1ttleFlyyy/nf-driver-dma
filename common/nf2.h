@@ -427,6 +427,7 @@
  */
 #define SIOCREGREAD		SIOCDEVPRIVATE
 #define SIOCREGWRITE		(SIOCDEVPRIVATE + 1)
+#define SIOCSENDREQ 		(SIOCDEVPRIVATE + 2)
 
 /* MDIO registers */
 #define MDIO_0_BASE                    0x0440000
