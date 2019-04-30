@@ -77,6 +77,7 @@ static void nf2c_check_link_status(struct nf2_card_priv *card,
 
 int rdma_rflag;
 int rdma_r_in_process = 0;
+int rdma_r_len = 0;
 /**
  * nf2c_open - open method called when the interface is brought up
  * @dev:	Net device
@@ -371,6 +372,24 @@ static int nf2c_send(struct net_device *dev)
 		} else {
 			dma_len = skb->len;
 		}
+
+		// int i;
+  //       for (i=0; i<dma_len;i++) {
+  //               if(i%8==0) {
+  //                       printk("0x");
+  //               }
+  //               printk("%02x", skb->data[i]);
+  //               if (i%8==7) {
+  //                       printk(",\n");
+  //               }
+  //               else if(i%8==3) {
+  //                       printk(",0x");
+  //               }
+  //       }
+  //       printk("\n");
+  //       printk("----dma len: %d\n----", dma_len);
+
+
 		iowrite32(dma_len,
 				card->ioaddr + CPCI_REG_DMA_E_SIZE);
 
@@ -390,12 +409,15 @@ static int nf2c_send(struct net_device *dev)
 
 		iowrite32(0x2000,
 				card->ioaddr + CPCI_REG_DMA_E_ADDR);
-		iowrite32(64,
+				
+		printk("rdma len %d\n", rdma_r_len);
+		iowrite32(rdma_r_len,
 				card->ioaddr + CPCI_REG_DMA_E_SIZE);
 		iowrite32(NF2_SET_DMA_CTRL_MAC(rd_iface) | DMA_CTRL_OWNER,
 				card->ioaddr + CPCI_REG_DMA_E_CTRL);
 
 		rdma_rflag = 0;
+		rdma_r_len = 0;
 		rdma_r_in_process = 1;
 
 	}
@@ -568,6 +590,19 @@ static int nf2c_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 						(iface->iface)) +
 					data->reg_num);
 			return 0;
+	case SIOCSENDREQ:
+		rdma_rflag = 1;
+		rdma_r_len = 64;
+		nf2c_send(dev);
+		return 0;
+
+		// iowrite32(0x2000, card->ioaddr + CPCI_REG_DMA_E_ADDR);
+				
+		// printk("rdma len %d\n", rdma_r_len);
+		// iowrite32(rdma_r_len,
+		// 		card->ioaddr + CPCI_REG_DMA_E_SIZE);
+		// iowrite32(NF2_SET_DMA_CTRL_MAC(rd_iface) | DMA_CTRL_OWNER,
+		// 		card->ioaddr + CPCI_REG_DMA_E_CTRL);
 
 	default:
 			return -EOPNOTSUPP;
@@ -937,13 +972,15 @@ static irqreturn_t nf2c_intr(int irq, void *dev_id
                 unsigned int lo, hi;
                 lo = ioread32(card->ioaddr + 0x200031c);
                 hi = ioread32(card->ioaddr + 0x2000320);
-
+                printk("reg value: %08x %08x\n", hi, lo);
+                
 				// rdma_wflag = (lo == 0x38392020) && (hi == 0x34353637);
-				rdma_rflag =  (hi == 0x34353637) && (lo == 0x38392020);
+				rdma_rflag =  (hi == 0x34353637) && ((lo & 0x0000ffff) == 0x2020);
 
 				if (rdma_rflag) {
-
+					rdma_r_len = (lo & 0xffff0000) >> 16;
 					nf2c_send(netdev);
+					card->dma_rx_addr = 0x3000;
 				}
 
 				else if (rdma_wflag) {
