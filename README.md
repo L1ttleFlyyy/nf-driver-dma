@@ -5,7 +5,7 @@ DMA driver and user api for NetFPGA
 [Linux Device Drivers, Third Edition](https://lwn.net/Kernel/LDD3/) chapter 15
 
 ## Mapping physical memory to user space
-[How to access physical addresses from user space in Linux?](https://stackoverflow.com/questions/12040303/how-to-access-physical-addresses-from-user-space-in-linux)
+[How to access physical addresses from user space in Linux?](https://stackoverflow.com/questions/12827948/mapping-a-physical-device-to-a-pointer-in-user-space)
 
 ## Usage
 `make`
